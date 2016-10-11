@@ -34,10 +34,11 @@ class Node(object):
                                  
 class Client(Node):
     def __init__(self, mode, port, timeout, windowSize):
-        super().__init__(mode, port)
+        super(Client,self).__init__(mode, port)
         self.packetList = []
         self.timeout    = timeout
-        self.windowSize = windowSize  
+        self.windowSize = windowSize
+        print 'client'
 
     def readFromFile(self, filename):
         with open(filename) as f:
@@ -50,22 +51,35 @@ class Client(Node):
                 self.packetList.append(packet(counter,readChar))
 
     def send(self):
-        
+        self.sock.send('')#manda packet.serialized
               
-    def sendAck(self):
+    
               
 
 class Server(Node):
     def __init__(self, mode, port, timeout, windowSize):
-        super().__init__(mode, port)
+        super(Server, self).__init__(mode, port)
         self.packetList = []
         self.timeout    = timeout
-        self.windowSize = windowSize       
+        self.windowSize = windowSize
+        print 'server'
+    
+    def sendAck(self):
+        self.sock.send('')#manda ACK
+        
+    def listen(self):
+        self.sock.listen(self.windowSize)
+        
+    def recieve(self):
+        self.sock.recv(1024)
 
 
 
-class Middle(Node):
-#proba
+class Middle(Node):#proba
+    def __init__(self, mode, clientPort, serverPort):
+        self.mode = mode
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 
 # def ReadFile(name, sock):
