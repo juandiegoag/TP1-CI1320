@@ -8,13 +8,15 @@ class Packet(object):
     def __init__(self, seqNumber, character):
         self.seqNumber  = seqNumber
         self.character  = character
-        self.serialized = seqNumber+":"+character
-        self.status     = True #True means that the packet is NOT declined 
+        self.serialized = str(seqNumber)+":"+str(character)
     
     def unserialize(self, serializedString):
         self.seqNumber, self.character = serializedString.split(':', 1)
+        self.seqNumber = int(self.seqNumber)
         self.serialized = serializedString
-        self.status = True
+
+    def getSerialized(self):
+        return self.serialized
 
 #Node representation. Superclass containing server, middle, and client.     
 class Node(object):
@@ -31,13 +33,19 @@ class Node(object):
     def bind(self , portToBind):
         bindAddress = ('localhost',self.port)
         self.sock.bind(bindAddress)
+    
+    def closeSocket(self):
+        self.sock.close()
                                  
 class Client(Node):
     def __init__(self, mode, port, timeout, windowSize):
         super(Client,self).__init__(mode, port)
         self.packetList = []
-        self.timeout    = timeout
+        self.ackArray = [] #
+        self.lower = 0 #lower and upper to handle sliding window
+        self.upper = windowSize - 1
         self.windowSize = windowSize
+        self.timeout    = timeout
         print 'client'
 
     def readFromFile(self, filename):
@@ -50,10 +58,28 @@ class Client(Node):
                 counter += 1 
                 self.packetList.append(packet(counter,readChar))
 
-    def send(self):
-        self.sock.send('')#manda packet.serialized
-              
+    def sendPacket(self, index):
+        self.sock.send(packetList[index].getSerialized())
     
+    def sendWindow(self):
+        i = self.lower
+        while i <= self.upper:
+            self.sendPacket(i)
+            i += 1
+        
+    def recieveAck(self):
+        ack = self.sock.recv(1)
+        if ack:
+            self.ackArray[int(ack)] = True 
+    
+    def checkAllAcks(self):
+        completed = any(ack == False for ack in self.ackArray)
+        if completed is False:
+            for i in [i for i,x in enumerate(self.ackArray) if x == False]:
+                self.sendPacket(self.lower+i)
+        else:
+            self.lower += self.windowSize
+            self.upper += self.windowSize
               
 
 class Server(Node):
