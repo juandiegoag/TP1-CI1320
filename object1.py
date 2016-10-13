@@ -6,25 +6,19 @@ import time
 import random
 import Queue
 
-#Single packet representation class.
 class Packet(object):
-    def __init__(self, seqNumber, character):
-        self.seqNumber  = seqNumber
-        self.character  = character
-        self.serialized = str(seqNumber)+":"+str(character)
-        self.ackRecvd   = False
-        self.sent       = time.time()
-    
     def __init__(self, serializedString):
         self.seqNumber, self.character = serializedString.split(':', 1)
         self.seqNumber = int(self.seqNumber)
         self.serialized = serializedString
+        self.ackRecvd   = False
+        self.sent       = time.time()
     
     def getSerialized(self):
         return self.serialized
     
     def getAckRcvd(self):
-        return self.ackRcvd
+        return self.ackRecvd
     
     def setAckRcvd(self, rcv):
         self.ackRecvd = rcv
@@ -34,10 +28,13 @@ class Packet(object):
 
     def getSent(self):
         return self.sent
+    
+    def getCharacter(self):
+        return self.character
 
 #Node representation. Superclass containing server, middle, and client.     
 class Node(object):
-   def __init__(self, mode, port):
+    def __init__(self, mode, port):
         self.mode         = mode #1 for debug, 0 for standard
         self.port         = port
         #TCP/IP socket for use:
@@ -47,13 +44,17 @@ class Node(object):
         connectAddress = ('localhost',self.port)
         self.sock.connect(connectAddress)
 
-    def bind(self , portToBind):
+    def bind(self):
         bindAddress = ('localhost',self.port)
         self.sock.bind(bindAddress)
-    
+        print ('Server binded to', bindAddress)
+
     def closeSocket(self):
         self.sock.close()
-                                 
+    
+    def listen(self):
+        self.sock.listen(1)
+                                            
 class Client(Node):
     def __init__(self, mode, port, timeout, windowSize):
         super(Client,self).__init__(mode, port)
@@ -65,30 +66,34 @@ class Client(Node):
         print 'Client node started'
 
     def readFromFile(self, filename):
-        if self.mode is 1:
-            print 'Reading and parsing from file into list'
+        if self.mode is 1: print 'Reading and parsing from file into list'
         with open(filename) as f:
-            counter = 0
+            seqNumber = 0
             while True:
                 readChar = f.read(1)
                 if not readChar:
                     break
-                counter += 1 
-                self.packetList.append(packet(counter,readChar))
-        if self.mode is 1:
-            print 'Reading done. Total '+str(len(self.packetList))+' nodes to send.'
+                seqNumber += 1 
+                sequenceNumber = str(seqNumber) #normalize all possible numbers
+                if len(str(seqNumber))   is 1: sequenceNumber = "0000"+str(seqNumber)
+                elif len(str(seqNumber)) is 2: sequenceNumber = "000" +str(seqNumber)
+                elif len(str(seqNumber)) is 3: sequenceNumber = "00"  +str(seqNumber)
+                elif len(str(seqNumber)) is 4: sequenceNumber = "0"   +str(seqNumber)
+                serialized = sequenceNumber+":"+str(readChar)
+
+                self.packetList.append(Packet(serialized))
+        if self.mode is 1: print 'Reading done. Total '+str(len(self.packetList))+' nodes to send.'
 
     def sendPacket(self, index):
-        packet = packetList[index].getSerialized()
-        if self.mode is 1:
-                  print 'Sending packet: ' + packet + ' to server' 
-        packetList[index].send()
+        packet = self.packetList[index].getSerialized()
+        if self.mode is 1: print 'Sending packet: ' + packet + ' to server' 
+        self.packetList[index].send()
         self.sock.send(packet)
     
     def checkTime(self):
         i = self.lower
         while i <= self.upper:
-            if self.packetList[i].getSent()+timeout > time.time():
+            if self.packetList[i].getAckRcvd is False and self.packetList[i].getSent()+timeout > time.time():
                 self.sendPacket(i)
 
     def sendWindow(self):
@@ -97,29 +102,31 @@ class Client(Node):
             self.sendPacket(i)
             i += 1
 
-    def slideWindow(self, number):
-         if self.mode is 1:
-                  print 'Sliding window ' + str(number) + ' position(s)'             
-        self.lower += number
-        self.upper += number
+    def slideWindowBy(self, number):
+        if self.mode is 1:
+            print 'Sliding client\'s window ' + str(number) + ' position(s)'             
+        if self.upper+1 < len(self.packetList):
+            self.lower += number
+            self.upper += number
+            self.sendPacket(self.upper)
+
+    def slideWindow(self):
+        i = self.lower
+        while i <= self.upper:
+            if self.packetList[i].getAckRcvd() is True:
+                self.slideWindowBy(1)                        
+            else:
+                break
+            i += 1
     
     def recieveAck(self):
-        if self.mode is 1:
-            print 'Recieving ACK...'
+        if self.mode is 1: print 'Recieving ACK...'
         ack = self.sock.recv(1)
-        if ack:
-            if self.mode is 1:
-                print 'Recieved ACK message for packet '+str(self.lower+int(ack))
-            self.packetList[self.lower+int(ack)].setAckRcvd(True)  
-            if ack is 0:
-                self.slideWindow(1)
-            i = self.lower
-            while i < self.upper:
-                if packetList[i].getAckRcvd() is True:
-                    self.slideWindow(1)                        
-                else:
-                    break
-                i += 1
+        if self.mode is 1: print 'Recieved ACK message for packet '+str(self.lower+int(ack))
+        self.packetList[self.lower+int(ack)].setAckRcvd(True)  
+        # self.checkTime()
+        # if ack is 0: self.slideWindowBy(1)
+        self.slideWindow()
             
 
     # def checkAllAcks(self):
@@ -138,28 +145,37 @@ class Client(Node):
 class Server(Node):
     def __init__(self, mode, port, timeout, windowSize):
         super(Server, self).__init__(mode, port)
-        self.packetList = []
-        self.upper = windowSize - 1
+        self.packetList = [None]*100
+        self.upper      = windowSize - 1
+        self.lower      = 0
         self.windowSize = windowSize
         self.timeout    = timeout        
-        self.windowSize = windowSize
-        print 'Server node started
+        print 'Server node started'
 
+    def exportResults(self):
+        result = ""
+        for x in self.packetList:
+            result += x.getCharacter()
+        with('result.txt','w') as f:
+            f.write(result)
+    
     def recieve(self):
-        try:
-            while True:              
-                if self.mode is 1:
-                    print 'Waiting to connect'
-                connection, address = sock.accept()
-                buf = connection.recv(7)
-                if buf:
-                    print buf
-
-                    seqNumber, character = buf.split(':', 1)
-                    connection.send(str(int(seqNumber)%8))                       
-                    break
-        finally:
-            connection.close()
+        while True:              
+            if self.mode is 1: print 'Waiting to connect...'
+            connection, address = self.sock.accept()
+            try:
+                while True:      
+                    buf = connection.recv(7)
+                    print 'Recieved: '+ buf
+                    if buf:                            
+                        seqNumber, character = buf.split(':', 1)
+                        if self.packetList[int(seqNumber)] is None:
+                            self.packetList[int(seqNumber)] = Packet(buf)
+                        connection.send(str(int(seqNumber) % self.windowSize ))
+                    else: break                       
+            finally:
+                connection.close()
+                # self.exportResults()
 
 class Middle(Node):   #proba
     def __init__(self, mode, clientPort, serverPort, queue1, queue2, probabilidad):
