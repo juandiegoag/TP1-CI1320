@@ -171,17 +171,25 @@ class Middle(Node):   #proba
         self.proba = probabilidad
     
     def getData(self, recieveLock):
-        recieveLock.acquire()
-        if not self.qRecieve.empty():
-            data = self.qRecieve.get()
-            recieveLock.release()
-            self.sock.send(data)
+        #recieveLock.acquire()
+        if not self.qRecieve.empty():                   #if queue is not empty
+            if self.mode == 1:                          #debug
+                print "Consiguiendo dato de cola"
+            data = self.qRecieve.get()                  #gets value from queue
+            #recieveLock.release()
+            return data                                 #return item from queue
         else:
-            recieveLock.release()
+            #recieveLock.release()
+            if self.mode == 1:                          #debug (empty queue)
+                print "cola vacia"
+            pass
         
-    def putData(self, sendLock):
-        data = self.sock1.recv(1024)
-        if random.uniform(0,1) > self.proba:
-            sendLock.acquire()
-            self.qSend.put(data)
-            sendLock.release()
+    def putData(self, sendLock, data):
+        #data = self.sock1.recv(1024)                   #descomentar esto para recibir del socket y quitar el parametro
+        #if data is not None:                           #if recieved data is not None, send data
+        #######if random.uniform(0,1) > self.proba:     #proba
+        #####sendLock.acquire()
+        if self.mode == 1:                              #debug
+            print "Poniendo en cola"
+        self.qSend.put(data)                            #puts in queue
+        #####sendLock.release()
