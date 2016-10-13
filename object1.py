@@ -3,6 +3,8 @@ import sys
 import threading
 import os
 import time
+import random
+import Queue
 
 #Single packet representation class.
 class Packet(object):
@@ -159,14 +161,27 @@ class Server(Node):
         finally:
             connection.close()
 
-
-
-
-
-class Middle(Node):#proba
-    def __init__(self, mode, clientPort, serverPort):
+class Middle(Node):   #proba
+    def __init__(self, mode, clientPort, serverPort, queue1, queue2, probabilidad):
         self.mode = mode
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-
+        self.qSend = queue1
+        self.qRecieve = queue2
+        self.proba = probabilidad
+    
+    def getData(self, recieveLock):
+        recieveLock.acquire()
+        if not self.qRecieve.empty():
+            data = self.qRecieve.get()
+            recieveLock.release()
+            self.sock.send(data)
+        else:
+            recieveLock.release()
+        
+    def putData(self, sendLock):
+        data = self.sock1.recv(1024)
+        if random.uniform(0,1) > self.proba:
+            sendLock.acquire()
+            self.qSend.put(data)
+            sendLock.release()
