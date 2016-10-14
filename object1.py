@@ -99,11 +99,11 @@ class Client(Node):
     
     def checkTime(self):
         i = self.lower
+        self.debug('Checking for timeout...')
         while i <= self.upper:
-            # print (self.packetList[i].getSent()+self.timeout, 'timeout')  
-            # print (time.time()%60, 'nein')
-            if self.packetList[i].getAckRcvd() is False and self.packetList[i].getSent()+self.timeout > time.time()%60:
+            if self.packetList[i].getAckRcvd() is False and self.timeout < time.time()%60-self.packetList[i].getSent():
                 self.sendPacket(i)
+            i += 1
 
     def sendWindow(self):
         i = self.lower
@@ -131,29 +131,43 @@ class Client(Node):
         while True:
             self.debug('Recieving ACK...')
             ack = None
-            self.sock.settimeout(0.2)
+            self.sock.settimeout(0.1)
             try:
                 ack = self.sock.recv(5)
                 if ack is not None:
-                      self.packetList[int(ack)].setAckRcvd(True)
-                self.checkTime()  
+                    if int(ack) == 10001 : 
+                        self.debug('No more ACKs to recieve. Shutting down....')
+                        break
+                    self.packetList[int(ack)].setAckRcvd(True)
                 self.slideWindow()
-                if int(ack) == 10001 : break
                 self.debug('Recieved ACK message for packet '+ack)
-            except socket.timeout, e: pass
+            except socket.timeout, e: pass                 
+            self.checkTime()  
             self.sock.settimeout(None)
             
 
     def runClientNode(self,filename):
+        start = time.time()%60
         self.connect()
         self.readFromFile(filename)
         self.sendWindow()
-        self.recieveAck()            
+        self.recieveAck()   
+        self.closeSocket()
+        self.debug('Finished.')    
+        print time.time()%60 - start    
+
+class File(object): #used to save the file 
+    def __init__(self, file_name, method):
+        self.file_obj = open(file_name, method)
+    def __enter__(self):
+        return self.file_obj
+    def __exit__(self, type, value, traceback):
+        self.file_obj.close()
 
 class Server(Node):
     def __init__(self, mode, port, timeout, windowSize, name):
         super(Server, self).__init__(mode, port, name)
-        self.packetList = [None]*100
+        self.packetList = [None]*10000 #por arreglar
         self.upper      = windowSize - 1
         self.lower      = 0
         self.windowSize = windowSize
@@ -163,9 +177,10 @@ class Server(Node):
     def exportResults(self):
         result = ""
         for x in self.packetList:
+            if x is None: break
             result += x.getCharacter()
-        with('result.txt','w') as f:
-            f.write(result)
+        with File('result.txt','a') as f:
+            f.write(str(result))
     
     def recieve(self):
         cont = True
@@ -179,10 +194,12 @@ class Server(Node):
                         seqNumber, character = buf.split(':', 1)
                         if seqNumber=='' or int(seqNumber) == 10001: 
                             cont = False
+                            self.debug('Done. Closing socket.')
                             break
                         print 'Recieved: '+ buf
                         if self.packetList[int(seqNumber)] is None:
                                   self.packetList[int(seqNumber)] = Packet(buf)
+                        self.debug('Sending ['+seqNumber+'] ACK...')
                         connection.send(seqNumber)
                     else: break                       
             finally:
@@ -195,13 +212,14 @@ class Server(Node):
             self.recieve()
 
 class Middle(Node):   #proba
-    def __init__(self, mode, port, queue1, queue2, probability, name):
+    def __init__(self, mode, port, queue1, queue2, probability, name, kill):
         super(Middle, self).__init__(mode, port, name)
         self.sock     = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.qSend    = queue1
         self.qRecieve = queue2
         self.prob     = probability
-    
+        self.kill     = kill
+        
     def recieveFromClient(self):
         cont = True
         while cont:              
@@ -210,7 +228,7 @@ class Middle(Node):   #proba
                 try:
                     while True:
                         buf = None 
-                        connection.settimeout(0.2)
+                        connection.settimeout(0.1)
                         try:
                             buf = connection.recv(7)
                         except socket.timeout, e: pass  
@@ -221,11 +239,21 @@ class Middle(Node):   #proba
                         self.debug('Retrieving ACK message from server to client...')
                         ack = self.getData()
                         if ack is not None: #checks if there's an ACK waiting to be forwarded
-                            if ack =='' or int(ack) == 10001: 
-                                cont = False
-                                break
+                            try:
+                                if  int(ack) == 10001: 
+                                    cont = False
+                                    self.debug("No more ACKs. Closing socket.")
+                                    connection.sendall(ack)
+                                    connection.close()
+                            except ValueError: 
+                                    cont = False
+                                    self.debug("No more ACKs. Closing socket.")
+                                    connection.sendall('10001')
+                                    connection.close()
+                                    break
+
                             print self.name +'Retrieved. Forwarding ACK:['+ack+'] to client'
-                            connection.sendall(str(ack)) #send it
+                            connection.sendall(ack) #send it
                         else:
                             print self.name + 'No ACK to forward right now.' #if not, notify                  
                         #break     #break                   
@@ -244,13 +272,21 @@ class Middle(Node):   #proba
                 self.debug('Sending '+packet+' to server...')
                 self.sock.send(packet)
                 self.debug('Waiting for server\'s answer...')
+                self.sock.settimeout(0.1)
                 ack = self.sock.recv(5)
+                self.sock.settimeout(None)
+                try: 
+                    if int(ack) == 10001 : 
+                        self.putData(ack)
+                        break
+                except ValueError: pass
                 self.debug('Recieved '+ack+' from server')
                 self.putData(ack)
 
     def runMiddleServer(self):
         self.connect()
         self.recieveFromMiddle()
+        self.closeSocket()
 
     def getData(self, recieveLock=None):
         #recieveLock.acquire()
@@ -268,10 +304,22 @@ class Middle(Node):   #proba
     def putData(self, data, sendLock=None):
         #data = self.sock1.recv(1024)                   #descomentar esto para recibir del socket y quitar el parametro
         #if data is not None:                           #if recieved data is not None, send data
-        #######if random.uniform(0,1) > self.prob:     #proba
-        #####sendLock.acquire()
-        if self.mode is 1:  print self.name+ "Sending "+data+" through queue..."    #debug  
-        self.qSend.put(data)                            #puts in queue
-        if self.mode is 1:  print self.name+ "Sent!"    #debug
+        
+        if self.mode == 1 and self.kill == 1:
+            kill = raw_input('Do you want to kill this packet('+data+')?[y/n]')
+            if kill is 'n':
+                self.debug("Sending "+data+" through queue...")    #debug  
+                self.qSend.put(data)                            #puts in queue
+                self.debug("Sent!")    #debug
+            else:
+                self.debug('Packet killed!')
+        else: 
+            if random.uniform(0,1) > self.prob:     #proba
+            #####sendLock.acquire()
+                self.debug("Sending "+data+" through queue...")    #debug  
+                self.qSend.put(data)                            #puts in queue
+                self.debug("Sent!")    #debug
+            else:
+                self.debug('Packet lost!')
 
         #####sendLock.release()
