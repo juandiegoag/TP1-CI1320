@@ -204,7 +204,7 @@ class Server(Node):
                     else: break                       
             finally:
                 connection.close()
-                # self.exportResults()
+                self.exportResults()
 
     def runServerNode(self):
             self.bind()
